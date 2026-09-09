@@ -1,0 +1,20 @@
+{
+  "name": "open-mindmap",
+  "version": "1.0.0",
+  "description": "Self-hosted Web Mind Map Platform with Docker & Persistence",
+  "scripts": {
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build:client": "cd client && npm run build",
+    "start": "cd server && npm start"
+  },
+  "keywords": [
+    "mindmap",
+    "simple-mind-map",
+    "self-hosted",
+    "docker",
+    "knowledge-base"
+  ],
+  "author": "",
+  "license": "MIT"
+}
