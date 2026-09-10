@@ -601,6 +601,52 @@
                 </span>
               </label>
             </div>
+
+            <!-- 概要样式 (Generalization Style) -->
+            <div class="pt-2.5 border-t border-slate-100">
+              <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2 px-1">概要样式</span>
+              <div class="grid grid-cols-2 gap-1.5">
+                <!-- 大括号样式 (bracket) -->
+                <button
+                  @click="changeGeneralizationStyle('bracket')"
+                  :class="[
+                    'flex flex-col items-center justify-center py-2 px-1 rounded-xl border transition-all cursor-pointer text-center group',
+                    currentGeneralizationStyle === 'bracket'
+                      ? 'border-indigo-500 bg-indigo-50/80 text-indigo-700 font-semibold shadow-2xs'
+                      : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50 text-slate-700'
+                  ]"
+                  title="大括号样式：虚线引导线 + 经典大括弧"
+                >
+                  <svg class="w-6 h-6 mb-1 text-current" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M 12 6 Q 16 6 16 10 L 16 13 Q 16 16 19 16 Q 16 16 16 19 L 16 22 Q 16 26 12 26" />
+                    <rect x="22" y="11.5" width="7" height="9" rx="2" />
+                    <line x1="3" y1="9" x2="8" y2="9" stroke-dasharray="1.5 1.5" opacity="0.6"/>
+                    <line x1="3" y1="23" x2="8" y2="23" stroke-dasharray="1.5 1.5" opacity="0.6"/>
+                  </svg>
+                  <span class="text-[11px]">大括号样式</span>
+                </button>
+
+                <!-- 连线样式 (line) -->
+                <button
+                  @click="changeGeneralizationStyle('line')"
+                  :class="[
+                    'flex flex-col items-center justify-center py-2 px-1 rounded-xl border transition-all cursor-pointer text-center group',
+                    currentGeneralizationStyle === 'line'
+                      ? 'border-indigo-500 bg-indigo-50/80 text-indigo-700 font-semibold shadow-2xs'
+                      : 'border-slate-100 hover:border-slate-200 hover:bg-slate-50 text-slate-700'
+                  ]"
+                  title="连线样式：多节点平滑曲线汇聚到概要文本框（各组专属颜色）"
+                >
+                  <svg class="w-6 h-6 mb-1 text-current" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M 6 8 C 14 8 15 16 22 16" />
+                    <path d="M 6 16 L 22 16" />
+                    <path d="M 6 24 C 14 24 15 16 22 16" />
+                    <rect x="22" y="11.5" width="7" height="9" rx="2" />
+                  </svg>
+                  <span class="text-[11px]">连线样式</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1287,6 +1333,9 @@ const rootLineKeepSame = ref(true);
 const nodeUseLineStyle = ref(false);
 const isRainbowLines = ref(false);
 
+// Generalization Style states ('line' 连线样式 / 'bracket' 大括号样式)
+const currentGeneralizationStyle = ref('line');
+
 const currentLineStyleName = computed(() => {
   if (currentLineStyle.value === 'curve') return '曲线';
   if (currentLineStyle.value === 'direct') return '直线';
@@ -1358,6 +1407,7 @@ const applyThemeCardStyles = () => {
   const updatedConfig = {
     ...currentConfig,
     lineStyle: currentLineStyle.value,
+    generalizationStyle: currentGeneralizationStyle.value,
     nodeUseLineStyle: false,
     rootLineKeepSameInCurve: rootLineKeepSame.value,
     rootLineStartPositionKeepSameInCurve: rootLineKeepSame.value,
@@ -1371,6 +1421,18 @@ const applyThemeCardStyles = () => {
 
   mindMapInstance.setThemeConfig(updatedConfig);
   mindMapInstance.reRender();
+};
+
+const changeGeneralizationStyle = (style) => {
+  currentGeneralizationStyle.value = style;
+  if (!mindMapInstance) return;
+  const activeNode = getActiveNode();
+  if (activeNode && activeNode.isGeneralization) {
+    activeNode.setData({ generalizationStyle: style });
+  }
+  applyThemeCardStyles();
+  triggerAutoSave();
+  showToast(`已切换概要样式为【${style === 'line' ? '连线样式' : '大括号样式'}】`, 'success');
 };
 
 const changeLineStyle = (style) => {
@@ -2040,6 +2102,11 @@ const initMindMap = (data) => {
         currentLineStyle.value = config.lineStyle;
       } else {
         currentLineStyle.value = mindMapInstance.getThemeConfig('lineStyle') || 'straight';
+      }
+      if (config.generalizationStyle) {
+        currentGeneralizationStyle.value = config.generalizationStyle;
+      } else {
+        currentGeneralizationStyle.value = mindMapInstance.getThemeConfig('generalizationStyle') || 'line';
       }
       if (config.nodeUseLineStyle !== undefined) {
         nodeUseLineStyle.value = config.nodeUseLineStyle;
