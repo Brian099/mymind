@@ -68,20 +68,34 @@ export function renderHorizontalCurlyGeneralization(layoutInstance, item, isLeft
     ? item.node.children.slice(item.range[0], item.range[1] + 1)
     : [item.node];
 
+  let maxNodeRight = -Infinity;
+  let minNodeLeft = Infinity;
+
   const leafNodes = [];
-  function collectLeaves(n) {
+  function collectNodes(n) {
     if (!n) return;
+    if (typeof n.left === 'number' && typeof n.width === 'number') {
+      const r = n.left + n.width;
+      if (r > maxNodeRight) maxNodeRight = r;
+      if (n.left < minNodeLeft) minNodeLeft = n.left;
+    }
     const isExpanded = n.getData && n.getData('expand') !== false;
     if (isExpanded && n.children && n.children.length > 0) {
-      n.children.forEach(collectLeaves);
+      n.children.forEach(collectNodes);
     } else {
       leafNodes.push(n);
     }
   }
-  targetRoots.forEach(collectLeaves);
+  targetRoots.forEach(collectNodes);
+
+  if (maxNodeRight === -Infinity) maxNodeRight = right;
+  if (minNodeLeft === Infinity) minNodeLeft = left;
 
   let dashedD = '';
-  const minGapForDashed = 16; // Only draw dashed line if horizontal distance >= 16px
+  const minGapForDashed = 16;
+  const sw = 2;        // stroke width
+  const dashLen = 3;   // dash segment length
+  const pitch = 8;     // desired spacing pitch
 
   leafNodes.forEach(leaf => {
     const leafY = leaf.top + leaf.height / 2;
@@ -89,16 +103,39 @@ export function renderHorizontalCurlyGeneralization(layoutInstance, item, isLeft
     if (leafY < y1 - 8 || leafY > y2 + 8) return;
 
     if (isLeft) {
-      const xStart = leaf.left - 4;
-      const xTarget = xSpine;
-      if (xStart - xTarget >= minGapForDashed) {
-        dashedD += `M ${xStart},${leafY} L ${xTarget},${leafY} `;
+      const leafLeft = leaf.left;
+      const xStart = leafLeft - 6;
+      const xTarget = minNodeLeft;
+      const totalDist = xStart - xTarget;
+      if (totalDist >= minGapForDashed) {
+        const startX = xStart - sw / 2;
+        const targetX = xTarget + sw / 2;
+        const D = startX - targetX;
+        const count = Math.max(2, Math.round(D / pitch));
+        const step = (D - dashLen) / (count - 1);
+        for (let i = 0; i < count; i++) {
+          const segEnd = startX - i * step;
+          const segStart = segEnd - dashLen;
+          dashedD += `M ${segStart.toFixed(1)},${leafY} L ${segEnd.toFixed(1)},${leafY} `;
+        }
       }
     } else {
-      const xStart = leaf.left + leaf.width + 4;
-      const xTarget = xSpine;
-      if (xTarget - xStart >= minGapForDashed) {
-        dashedD += `M ${xStart},${leafY} L ${xTarget},${leafY} `;
+      const leafRight = leaf.left + leaf.width;
+      const xStart = leafRight + 6;
+      const xTarget = maxNodeRight;
+      const totalDist = xTarget - xStart;
+      if (totalDist >= minGapForDashed) {
+        // Visual bounds: left edge starts at xStart, right edge of the last dash aligns exactly with xTarget
+        const startX = xStart + sw / 2;
+        const targetX = xTarget - sw / 2;
+        const D = targetX - startX;
+        const count = Math.max(2, Math.round(D / pitch));
+        const step = (D - dashLen) / (count - 1);
+        for (let i = 0; i < count; i++) {
+          const segStart = startX + i * step;
+          const segEnd = segStart + dashLen;
+          dashedD += `M ${segStart.toFixed(1)},${leafY} L ${segEnd.toFixed(1)},${leafY} `;
+        }
       }
     }
   });
@@ -144,11 +181,10 @@ export function renderHorizontalCurlyGeneralization(layoutInstance, item, isLeft
       const themeConfig = (layoutInstance.mindMap && layoutInstance.mindMap.themeConfig) || {};
       const lineColor = themeConfig.generalizationLineColor || themeConfig.lineColor || '#64748b';
       item.generalizationDashedLine.stroke({
-        width: 1.5,
+        width: sw,
         color: lineColor,
-        dasharray: '3, 4',
         linecap: 'round'
-      }).fill({ color: 'none' }).opacity(0.6);
+      }).fill({ color: 'none' }).opacity(0.65);
       item.generalizationDashedLine.show();
     } else {
       item.generalizationDashedLine.plot('');
@@ -193,28 +229,48 @@ export function renderVerticalCurlyGeneralization(layoutInstance, item) {
     ? item.node.children.slice(item.range[0], item.range[1] + 1)
     : [item.node];
 
+  let maxNodeBottom = -Infinity;
   const leafNodes = [];
-  function collectLeaves(n) {
+  function collectNodes(n) {
     if (!n) return;
+    if (typeof n.top === 'number' && typeof n.height === 'number') {
+      const b = n.top + n.height;
+      if (b > maxNodeBottom) maxNodeBottom = b;
+    }
     const isExpanded = n.getData && n.getData('expand') !== false;
     if (isExpanded && n.children && n.children.length > 0) {
-      n.children.forEach(collectLeaves);
+      n.children.forEach(collectNodes);
     } else {
       leafNodes.push(n);
     }
   }
-  targetRoots.forEach(collectLeaves);
+  targetRoots.forEach(collectNodes);
+
+  if (maxNodeBottom === -Infinity) maxNodeBottom = bottom;
 
   let dashedD = '';
   const minGapForDashed = 16;
+  const sw = 2;
+  const dashLen = 3;
+  const pitch = 8;
 
   leafNodes.forEach(leaf => {
     const leafX = leaf.left + leaf.width / 2;
     if (leafX < x1 - 8 || leafX > x2 + 8) return;
-    const yStart = leaf.top + leaf.height + 4;
-    const yTarget = ySpine;
-    if (yTarget - yStart >= minGapForDashed) {
-      dashedD += `M ${leafX},${yStart} L ${leafX},${yTarget} `;
+    const yStart = leaf.top + leaf.height + 6;
+    const yTarget = maxNodeBottom;
+    const totalDist = yTarget - yStart;
+    if (totalDist >= minGapForDashed) {
+      const startY = yStart + sw / 2;
+      const targetY = yTarget - sw / 2;
+      const D = targetY - startY;
+      const count = Math.max(2, Math.round(D / pitch));
+      const step = (D - dashLen) / (count - 1);
+      for (let i = 0; i < count; i++) {
+        const segStart = startY + i * step;
+        const segEnd = segStart + dashLen;
+        dashedD += `M ${leafX},${segStart.toFixed(1)} L ${leafX},${segEnd.toFixed(1)} `;
+      }
     }
   });
 
@@ -257,11 +313,10 @@ export function renderVerticalCurlyGeneralization(layoutInstance, item) {
       const themeConfig = (layoutInstance.mindMap && layoutInstance.mindMap.themeConfig) || {};
       const lineColor = themeConfig.generalizationLineColor || themeConfig.lineColor || '#64748b';
       item.generalizationDashedLine.stroke({
-        width: 1.5,
+        width: sw,
         color: lineColor,
-        dasharray: '3, 4',
         linecap: 'round'
-      }).fill({ color: 'none' }).opacity(0.6);
+      }).fill({ color: 'none' }).opacity(0.65);
       item.generalizationDashedLine.show();
     } else {
       item.generalizationDashedLine.plot('');
