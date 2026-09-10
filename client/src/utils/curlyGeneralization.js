@@ -8,7 +8,8 @@ import Fishbone from 'simple-mind-map/src/layouts/Fishbone.js';
 import { CONSTANTS } from 'simple-mind-map/src/constants/constant.js';
 
 /**
- * Render elegant mathematical curly bracket '}' (or '{') for horizontal layouts
+ * Render elegant mathematical curly bracket '}' (or '{') for horizontal layouts,
+ * with supplementary dashed connector lines from distant leaf nodes to the bracket spine.
  * 
  * Geometry:
  * (x0, y1)  ╭─ (xSpine, y1 + r)
@@ -46,7 +47,7 @@ export function renderHorizontalCurlyGeneralization(layoutInstance, item, isLeft
   const xSpine = x0 + r * dir;
   const xTip = x0 + (r + tipW) * dir;
 
-  // SVG path with 4 quadratic beziers and 2 straight line segments for seamless C1 curvature
+  // SVG path with 4 quadratic beziers and 2 straight line segments for seamless curvature
   const path = `M ${x0},${y1} Q ${xSpine},${y1} ${xSpine},${y1 + r} L ${xSpine},${ym - r} Q ${xSpine},${ym} ${xTip},${ym} Q ${xSpine},${ym} ${xSpine},${ym + r} L ${xSpine},${y2 - r} Q ${xSpine},${y2} ${x0},${y2}`;
 
   const finalPath = layoutInstance.transformPath ? layoutInstance.transformPath(path) : path;
@@ -59,10 +60,106 @@ export function renderHorizontalCurlyGeneralization(layoutInstance, item, isLeft
     ? x0 - totalOffset - item.generalizationNode.width
     : x0 + totalOffset;
   item.generalizationNode.top = top + (bottom - top - item.generalizationNode.height) / 2;
+
+  // -------------------------------------------------------------
+  // Supplementary Dashed Guide Lines for Distant Leaf Nodes
+  // -------------------------------------------------------------
+  const targetRoots = item.range && item.node && item.node.children
+    ? item.node.children.slice(item.range[0], item.range[1] + 1)
+    : [item.node];
+
+  const leafNodes = [];
+  function collectLeaves(n) {
+    if (!n) return;
+    const isExpanded = n.getData && n.getData('expand') !== false;
+    if (isExpanded && n.children && n.children.length > 0) {
+      n.children.forEach(collectLeaves);
+    } else {
+      leafNodes.push(n);
+    }
+  }
+  targetRoots.forEach(collectLeaves);
+
+  let dashedD = '';
+  const minGapForDashed = 16; // Only draw dashed line if horizontal distance >= 16px
+
+  leafNodes.forEach(leaf => {
+    const leafY = leaf.top + leaf.height / 2;
+    // Only consider leaves within the vertical bracket range
+    if (leafY < y1 - 8 || leafY > y2 + 8) return;
+
+    if (isLeft) {
+      const xStart = leaf.left - 4;
+      const xTarget = xSpine;
+      if (xStart - xTarget >= minGapForDashed) {
+        dashedD += `M ${xStart},${leafY} L ${xTarget},${leafY} `;
+      }
+    } else {
+      const xStart = leaf.left + leaf.width + 4;
+      const xTarget = xSpine;
+      if (xTarget - xStart >= minGapForDashed) {
+        dashedD += `M ${xStart},${leafY} L ${xTarget},${leafY} `;
+      }
+    }
+  });
+
+  // Ensure dashed path element exists
+  if (!item.generalizationDashedLine) {
+    const parentSvg = item.generalizationLine.parent && item.generalizationLine.parent();
+    if (parentSvg && parentSvg.path) {
+      item.generalizationDashedLine = parentSvg.path();
+      if (item.generalizationDashedLine.backward) {
+        item.generalizationDashedLine.backward();
+      }
+    }
+  }
+
+  // Hook lifecycle (hide, show, remove) onto generalizationLine
+  if (item.generalizationLine && !item.generalizationLine._dashedHooked) {
+    item.generalizationLine._dashedHooked = true;
+    const origRemove = item.generalizationLine.remove.bind(item.generalizationLine);
+    item.generalizationLine.remove = function () {
+      if (item.generalizationDashedLine) {
+        item.generalizationDashedLine.remove();
+        item.generalizationDashedLine = null;
+      }
+      return origRemove();
+    };
+    const origHide = item.generalizationLine.hide.bind(item.generalizationLine);
+    item.generalizationLine.hide = function () {
+      if (item.generalizationDashedLine) item.generalizationDashedLine.hide();
+      return origHide();
+    };
+    const origShow = item.generalizationLine.show.bind(item.generalizationLine);
+    item.generalizationLine.show = function () {
+      if (item.generalizationDashedLine) item.generalizationDashedLine.show();
+      return origShow();
+    };
+  }
+
+  if (item.generalizationDashedLine) {
+    if (dashedD) {
+      const finalDashed = layoutInstance.transformPath ? layoutInstance.transformPath(dashedD) : dashedD;
+      item.generalizationDashedLine.plot(finalDashed);
+      const themeConfig = (layoutInstance.mindMap && layoutInstance.mindMap.themeConfig) || {};
+      const lineColor = themeConfig.generalizationLineColor || themeConfig.lineColor || '#64748b';
+      item.generalizationDashedLine.stroke({
+        width: 1.5,
+        color: lineColor,
+        dasharray: '3, 4',
+        linecap: 'round'
+      }).fill({ color: 'none' }).opacity(0.6);
+      item.generalizationDashedLine.show();
+    } else {
+      item.generalizationDashedLine.plot('');
+      item.generalizationDashedLine.hide();
+    }
+  }
 }
 
 /**
- * Render downward curly bracket '⏟' for vertical organization structure
+ * Render downward curly bracket '⏟' for vertical organization structure,
+ * with supplementary dashed connector lines from distant leaf nodes.
  */
 export function renderVerticalCurlyGeneralization(layoutInstance, item) {
   const boundaries = layoutInstance.getNodeGeneralizationRenderBoundaries(item, 'v');
@@ -90,6 +187,87 @@ export function renderVerticalCurlyGeneralization(layoutInstance, item) {
   const tipToNodeGap = 10;
   item.generalizationNode.top = yTip + tipToNodeGap;
   item.generalizationNode.left = left + (right - left - item.generalizationNode.width) / 2;
+
+  // Supplementary dashed lines
+  const targetRoots = item.range && item.node && item.node.children
+    ? item.node.children.slice(item.range[0], item.range[1] + 1)
+    : [item.node];
+
+  const leafNodes = [];
+  function collectLeaves(n) {
+    if (!n) return;
+    const isExpanded = n.getData && n.getData('expand') !== false;
+    if (isExpanded && n.children && n.children.length > 0) {
+      n.children.forEach(collectLeaves);
+    } else {
+      leafNodes.push(n);
+    }
+  }
+  targetRoots.forEach(collectLeaves);
+
+  let dashedD = '';
+  const minGapForDashed = 16;
+
+  leafNodes.forEach(leaf => {
+    const leafX = leaf.left + leaf.width / 2;
+    if (leafX < x1 - 8 || leafX > x2 + 8) return;
+    const yStart = leaf.top + leaf.height + 4;
+    const yTarget = ySpine;
+    if (yTarget - yStart >= minGapForDashed) {
+      dashedD += `M ${leafX},${yStart} L ${leafX},${yTarget} `;
+    }
+  });
+
+  if (!item.generalizationDashedLine) {
+    const parentSvg = item.generalizationLine.parent && item.generalizationLine.parent();
+    if (parentSvg && parentSvg.path) {
+      item.generalizationDashedLine = parentSvg.path();
+      if (item.generalizationDashedLine.backward) {
+        item.generalizationDashedLine.backward();
+      }
+    }
+  }
+
+  if (item.generalizationLine && !item.generalizationLine._dashedHooked) {
+    item.generalizationLine._dashedHooked = true;
+    const origRemove = item.generalizationLine.remove.bind(item.generalizationLine);
+    item.generalizationLine.remove = function () {
+      if (item.generalizationDashedLine) {
+        item.generalizationDashedLine.remove();
+        item.generalizationDashedLine = null;
+      }
+      return origRemove();
+    };
+    const origHide = item.generalizationLine.hide.bind(item.generalizationLine);
+    item.generalizationLine.hide = function () {
+      if (item.generalizationDashedLine) item.generalizationDashedLine.hide();
+      return origHide();
+    };
+    const origShow = item.generalizationLine.show.bind(item.generalizationLine);
+    item.generalizationLine.show = function () {
+      if (item.generalizationDashedLine) item.generalizationDashedLine.show();
+      return origShow();
+    };
+  }
+
+  if (item.generalizationDashedLine) {
+    if (dashedD) {
+      const finalDashed = layoutInstance.transformPath ? layoutInstance.transformPath(dashedD) : dashedD;
+      item.generalizationDashedLine.plot(finalDashed);
+      const themeConfig = (layoutInstance.mindMap && layoutInstance.mindMap.themeConfig) || {};
+      const lineColor = themeConfig.generalizationLineColor || themeConfig.lineColor || '#64748b';
+      item.generalizationDashedLine.stroke({
+        width: 1.5,
+        color: lineColor,
+        dasharray: '3, 4',
+        linecap: 'round'
+      }).fill({ color: 'none' }).opacity(0.6);
+      item.generalizationDashedLine.show();
+    } else {
+      item.generalizationDashedLine.plot('');
+      item.generalizationDashedLine.hide();
+    }
+  }
 }
 
 /**
