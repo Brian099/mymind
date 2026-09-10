@@ -117,9 +117,11 @@ import { useRoute } from 'vue-router';
 import MindMap from 'simple-mind-map';
 import Themes from 'simple-mind-map-plugin-themes';
 import ExportPlugin from 'simple-mind-map/src/plugins/Export.js';
+import { setupCurlyGeneralization } from '../utils/curlyGeneralization';
 import api from '../api';
 
 Themes.init(MindMap);
+setupCurlyGeneralization();
 MindMap.usePlugin(ExportPlugin);
 
 const route = useRoute();

@@ -1097,10 +1097,14 @@ import icons from 'simple-mind-map/src/svg/icons.js';
 import 'katex/dist/katex.min.css';
 import api from '../api';
 import { THEMES, LAYOUTS } from '../utils/mindmapHelper';
+import { setupCurlyGeneralization } from '../utils/curlyGeneralization';
 import ShareModal from '../components/ShareModal.vue';
 
 // Initialize full theme preset library
 Themes.init(MindMap);
+
+// Initialize mathematical curly bracket '}' generalization line style
+setupCurlyGeneralization();
 
 // Register plugins for full capabilities
 MindMap.usePlugin(ExportPlugin);
@@ -1357,6 +1361,9 @@ const applyThemeCardStyles = () => {
     nodeUseLineStyle: false,
     rootLineKeepSameInCurve: rootLineKeepSame.value,
     rootLineStartPositionKeepSameInCurve: rootLineKeepSame.value,
+    generalizationLineWidth: 2,
+    generalizationLineMargin: 6,
+    generalizationNodeMargin: 28,
     root: rootConfig,
     second: secondConfig,
     node: nodeConfig
