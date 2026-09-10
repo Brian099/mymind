@@ -5,7 +5,10 @@ import OrganizationStructure from 'simple-mind-map/src/layouts/OrganizationStruc
 import Timeline from 'simple-mind-map/src/layouts/Timeline.js';
 import VerticalTimeline from 'simple-mind-map/src/layouts/VerticalTimeline.js';
 import Fishbone from 'simple-mind-map/src/layouts/Fishbone.js';
+import Render from 'simple-mind-map/src/core/render/Render.js';
+import MindMapNode from 'simple-mind-map/src/core/render/node/MindMapNode.js';
 import { CONSTANTS } from 'simple-mind-map/src/constants/constant.js';
+import { createUid } from 'simple-mind-map/src/utils/index.js';
 
 /**
  * Render elegant mathematical curly bracket '}' (or '{') for horizontal layouts,
@@ -191,6 +194,422 @@ export function renderHorizontalCurlyGeneralization(layoutInstance, item, isLeft
       item.generalizationDashedLine.hide();
     }
   }
+
+  // -------------------------------------------------------------
+  // Layout and render child subtopics attached to generalization node
+  // -------------------------------------------------------------
+  layoutGeneralizationSubtree(layoutInstance, item, isLeft);
+}
+
+// Cache to track node instances without modifying the serialized node data (avoids circular references)
+const generalizationNodeCache = new Map();
+
+/**
+ * Layout and synchronize subtopics (children) of a generalization node (horizontal)
+ */
+export function layoutGeneralizationSubtree(layoutInstance, item, isLeft = false) {
+  const genNode = item.generalizationNode;
+  if (!genNode) return;
+
+  const itemData = (genNode.nodeData && genNode.nodeData.data) || item;
+  if (!itemData) return;
+
+  const childrenData = (itemData && itemData.children) || (genNode.nodeData && genNode.nodeData.children) || [];
+
+  if (itemData) {
+    itemData.children = childrenData;
+  }
+  if (!genNode.nodeData) genNode.nodeData = { data: itemData };
+  genNode.nodeData.children = childrenData;
+
+  if (!childrenData || childrenData.length === 0) {
+    if (genNode.children && genNode.children.length > 0) {
+      genNode.children.forEach(c => {
+        if (c.uid) generalizationNodeCache.delete(c.uid);
+        if (c.destroy) c.destroy();
+        else if (c.remove) c.remove();
+        if (layoutInstance.renderer) layoutInstance.renderer.removeNodeFromActiveList(c);
+      });
+      genNode.children = [];
+    }
+    if (genNode._lines && genNode._lines.length > 0) {
+      genNode._lines.forEach(l => l.remove());
+      genNode._lines = [];
+    }
+    return;
+  }
+
+  const MindMapNodeClass = genNode.constructor;
+
+  function syncNodes(parentNode, dataList, layerIndex) {
+    if (!parentNode.children) parentNode.children = [];
+    const oldChildren = parentNode.children.slice();
+    const newChildren = [];
+
+    dataList.forEach(childData => {
+      if (!childData.data) childData.data = {};
+      const uid = childData.data.uid || createUid();
+      childData.data.uid = uid;
+
+      let childNode = generalizationNodeCache.get(uid);
+      if (!childNode || childNode.parent !== parentNode) {
+        childNode = new MindMapNodeClass({
+          data: childData,
+          uid: uid,
+          renderer: layoutInstance.renderer,
+          mindMap: layoutInstance.mindMap,
+          draw: layoutInstance.draw,
+          layerIndex: layerIndex,
+          isRoot: false,
+          parent: parentNode
+        });
+        generalizationNodeCache.set(uid, childNode);
+      } else {
+        childNode.layerIndex = layerIndex;
+        childNode.parent = parentNode;
+        childNode.nodeData = childData;
+      }
+
+      if (layoutInstance.cacheNode) {
+        layoutInstance.cacheNode(uid, childNode);
+      }
+      if (layoutInstance.renderer && layoutInstance.renderer.nodeCache) {
+        layoutInstance.renderer.nodeCache[uid] = childNode;
+      }
+
+      newChildren.push(childNode);
+      childNode.getSize();
+
+      if (childData.children && childData.children.length > 0 && childData.data.expand !== false) {
+        syncNodes(childNode, childData.children, layerIndex + 1);
+      } else {
+        if (childNode.children && childNode.children.length > 0) {
+          childNode.children.forEach(c => {
+            if (c.uid) generalizationNodeCache.delete(c.uid);
+            if (c.destroy) c.destroy();
+            else if (c.remove) c.remove();
+            if (layoutInstance.renderer) layoutInstance.renderer.removeNodeFromActiveList(c);
+          });
+        }
+        childNode.children = [];
+      }
+    });
+
+    oldChildren.forEach(oldChild => {
+      if (!newChildren.includes(oldChild)) {
+        if (oldChild.uid) generalizationNodeCache.delete(oldChild.uid);
+        if (oldChild.destroy) oldChild.destroy();
+        else if (oldChild.remove) oldChild.remove();
+        if (layoutInstance.renderer) layoutInstance.renderer.removeNodeFromActiveList(oldChild);
+      }
+    });
+
+    parentNode.children = newChildren;
+  }
+
+  const baseLayer = (item.node && item.node.layerIndex) ? item.node.layerIndex + 1 : 1;
+  syncNodes(genNode, childrenData, baseLayer + 1);
+
+  function computeSubtreeHeights(node, marginY) {
+    if (!node.children || node.children.length === 0 || node.getData('expand') === false) {
+      node._areaHeight = node.height;
+      return node.height;
+    }
+    let totalH = 0;
+    node.children.forEach(c => {
+      totalH += computeSubtreeHeights(c, marginY);
+    });
+    totalH += (node.children.length - 1) * marginY;
+    node._areaHeight = Math.max(node.height, totalH);
+    return node._areaHeight;
+  }
+
+  const marginY = layoutInstance.getMarginY ? layoutInstance.getMarginY(baseLayer + 1) : 10;
+  computeSubtreeHeights(genNode, marginY);
+
+  function positionNodes(node) {
+    if (!node.children || node.children.length === 0 || node.getData('expand') === false) return;
+    const lIdx = node.layerIndex || 2;
+    const mX = layoutInstance.getMarginX ? layoutInstance.getMarginX(lIdx + 1) : 20;
+    const mY = layoutInstance.getMarginY ? layoutInstance.getMarginY(lIdx + 1) : 10;
+
+    const centerY = node.top + node.height / 2;
+    const totalChildHeight = node.children.reduce((acc, c) => acc + c._areaHeight, 0) + (node.children.length - 1) * mY;
+    let startTop = centerY - totalChildHeight / 2;
+
+    node.children.forEach(child => {
+      child.left = isLeft
+        ? node.left - child.width - mX
+        : node.left + node.width + mX;
+      child.top = startTop + (child._areaHeight - child.height) / 2;
+      startTop += child._areaHeight + mY;
+      positionNodes(child);
+    });
+  }
+
+  positionNodes(genNode);
+
+  // Render and layout child node SVG elements
+  function renderSubtree(node) {
+    if (!node.children || node.children.length === 0 || node.getData('expand') === false) return;
+    node.children.forEach(child => {
+      child.render(() => {}, true);
+      renderSubtree(child);
+    });
+  }
+  renderSubtree(genNode);
+
+  if (genNode.renderLine) {
+    genNode.renderLine(true);
+  }
+}
+
+/**
+ * Layout and synchronize subtopics of a generalization node (vertical)
+ */
+export function layoutGeneralizationVerticalSubtree(layoutInstance, item) {
+  const genNode = item.generalizationNode;
+  if (!genNode) return;
+
+  const itemData = (genNode.nodeData && genNode.nodeData.data) || item;
+  if (!itemData) return;
+
+  const childrenData = (itemData && itemData.children) || (genNode.nodeData && genNode.nodeData.children) || [];
+
+  if (itemData) {
+    itemData.children = childrenData;
+  }
+  if (!genNode.nodeData) genNode.nodeData = { data: itemData };
+  genNode.nodeData.children = childrenData;
+
+  if (!childrenData || childrenData.length === 0) {
+    if (genNode.children && genNode.children.length > 0) {
+      genNode.children.forEach(c => {
+        if (c.uid) generalizationNodeCache.delete(c.uid);
+        if (c.destroy) c.destroy();
+        else if (c.remove) c.remove();
+        if (layoutInstance.renderer) layoutInstance.renderer.removeNodeFromActiveList(c);
+      });
+      genNode.children = [];
+    }
+    if (genNode._lines && genNode._lines.length > 0) {
+      genNode._lines.forEach(l => l.remove());
+      genNode._lines = [];
+    }
+    return;
+  }
+
+  const MindMapNodeClass = genNode.constructor;
+
+  function syncNodes(parentNode, dataList, layerIndex) {
+    if (!parentNode.children) parentNode.children = [];
+    const oldChildren = parentNode.children.slice();
+    const newChildren = [];
+
+    dataList.forEach(childData => {
+      if (!childData.data) childData.data = {};
+      const uid = childData.data.uid || createUid();
+      childData.data.uid = uid;
+
+      let childNode = generalizationNodeCache.get(uid);
+      if (!childNode || childNode.parent !== parentNode) {
+        childNode = new MindMapNodeClass({
+          data: childData,
+          uid: uid,
+          renderer: layoutInstance.renderer,
+          mindMap: layoutInstance.mindMap,
+          draw: layoutInstance.draw,
+          layerIndex: layerIndex,
+          isRoot: false,
+          parent: parentNode
+        });
+        generalizationNodeCache.set(uid, childNode);
+      } else {
+        childNode.layerIndex = layerIndex;
+        childNode.parent = parentNode;
+        childNode.nodeData = childData;
+      }
+
+      if (layoutInstance.cacheNode) {
+        layoutInstance.cacheNode(uid, childNode);
+      }
+      if (layoutInstance.renderer && layoutInstance.renderer.nodeCache) {
+        layoutInstance.renderer.nodeCache[uid] = childNode;
+      }
+
+      newChildren.push(childNode);
+      childNode.getSize();
+
+      if (childData.children && childData.children.length > 0 && childData.data.expand !== false) {
+        syncNodes(childNode, childData.children, layerIndex + 1);
+      } else {
+        if (childNode.children && childNode.children.length > 0) {
+          childNode.children.forEach(c => {
+            if (c.uid) generalizationNodeCache.delete(c.uid);
+            if (c.destroy) c.destroy();
+            else if (c.remove) c.remove();
+            if (layoutInstance.renderer) layoutInstance.renderer.removeNodeFromActiveList(c);
+          });
+        }
+        childNode.children = [];
+      }
+    });
+
+    oldChildren.forEach(oldChild => {
+      if (!newChildren.includes(oldChild)) {
+        if (oldChild.uid) generalizationNodeCache.delete(oldChild.uid);
+        if (oldChild.destroy) oldChild.destroy();
+        else if (oldChild.remove) oldChild.remove();
+        if (layoutInstance.renderer) layoutInstance.renderer.removeNodeFromActiveList(oldChild);
+      }
+    });
+
+    parentNode.children = newChildren;
+  }
+
+  const baseLayer = (item.node && item.node.layerIndex) ? item.node.layerIndex + 1 : 1;
+  syncNodes(genNode, childrenData, baseLayer + 1);
+
+  function computeSubtreeWidths(node, marginX) {
+    if (!node.children || node.children.length === 0 || node.getData('expand') === false) {
+      node._areaWidth = node.width;
+      return node.width;
+    }
+    let totalW = 0;
+    node.children.forEach(c => {
+      totalW += computeSubtreeWidths(c, marginX);
+    });
+    totalW += (node.children.length - 1) * marginX;
+    node._areaWidth = Math.max(node.width, totalW);
+    return node._areaWidth;
+  }
+
+  const marginX = layoutInstance.getMarginX ? layoutInstance.getMarginX(baseLayer + 1) : 20;
+  computeSubtreeWidths(genNode, marginX);
+
+  function positionNodes(node) {
+    if (!node.children || node.children.length === 0 || node.getData('expand') === false) return;
+    const lIdx = node.layerIndex || 2;
+    const mX = layoutInstance.getMarginX ? layoutInstance.getMarginX(lIdx + 1) : 20;
+    const mY = layoutInstance.getMarginY ? layoutInstance.getMarginY(lIdx + 1) : 10;
+
+    const centerX = node.left + node.width / 2;
+    const totalChildWidth = node.children.reduce((acc, c) => acc + c._areaWidth, 0) + (node.children.length - 1) * mX;
+    let startLeft = centerX - totalChildWidth / 2;
+
+    node.children.forEach(child => {
+      child.top = node.top + node.height + mY;
+      child.left = startLeft + (child._areaWidth - child.width) / 2;
+      startLeft += child._areaWidth + mX;
+      positionNodes(child);
+    });
+  }
+
+  positionNodes(genNode);
+
+  // Render and layout child node SVG elements
+  function renderSubtree(node) {
+    if (!node.children || node.children.length === 0 || node.getData('expand') === false) return;
+    node.children.forEach(child => {
+      child.render(() => {}, true);
+      renderSubtree(child);
+    });
+  }
+  renderSubtree(genNode);
+
+  if (genNode.renderLine) {
+    genNode.renderLine(true);
+  }
+}
+
+/**
+ * Patch simple-mind-map to enable inserting and finding children of generalization nodes
+ */
+let isPatched = false;
+export function patchGeneralizationChildSupport() {
+  if (isPatched) return;
+  isPatched = true;
+
+  if (Render && Render.prototype) {
+    const origInsertChildNode = Render.prototype.insertChildNode;
+    Render.prototype.insertChildNode = function (openEdit = true, appointNodes, appointData, appointChildren = []) {
+      const list = (appointNodes && appointNodes.length > 0) ? appointNodes : this.activeNodeList;
+      const genNodes = list.filter(node => node.isGeneralization);
+      const regularNodes = list.filter(node => !node.isGeneralization);
+
+      if (genNodes.length > 0) {
+        const isRichText = this.hasRichTextPlugin();
+        const { focusNewNode, inserting } = this.getNewNodeBehavior(openEdit, list.length > 1);
+        const params = {
+          expand: true,
+          richText: isRichText,
+          isActive: focusNewNode
+        };
+        if (isRichText) params.resetRichText = true;
+
+        genNodes.forEach(genNode => {
+          const itemData = (genNode.nodeData && genNode.nodeData.data) || genNode.nodeData;
+          if (!itemData) return;
+          if (!itemData.children) itemData.children = [];
+          if (!genNode.nodeData.children) genNode.nodeData.children = itemData.children;
+
+          const text = this.mindMap.opt.defaultInsertBelowSecondLevelNodeText || '分支主题';
+          const newUid = createUid();
+          const newChild = {
+            inserting,
+            data: {
+              text,
+              uid: newUid,
+              ...params,
+              ...(appointData || {})
+            },
+            children: []
+          };
+          itemData.children.push(newChild);
+          genNode.setData({ expand: true });
+        });
+
+        if (focusNewNode) {
+          this.clearActiveNodeList();
+        }
+        this.mindMap.render();
+      }
+
+      if (regularNodes.length > 0) {
+        return origInsertChildNode.call(this, openEdit, regularNodes, appointData, appointChildren);
+      }
+    };
+
+    const origFindNodeByUid = Render.prototype.findNodeByUid;
+    Render.prototype.findNodeByUid = function (uid) {
+      const direct = origFindNodeByUid.call(this, uid);
+      if (direct) return direct;
+      if (generalizationNodeCache.has(uid)) {
+        return generalizationNodeCache.get(uid);
+      }
+      return null;
+    };
+  }
+
+  if (MindMapNode && MindMapNode.prototype) {
+    const origShowQuick = MindMapNode.prototype.showQuickCreateChildBtn;
+    if (origShowQuick) {
+      MindMapNode.prototype.showQuickCreateChildBtn = function () {
+        if (this.isGeneralization) {
+          if (this.getChildrenLength() > 0) return;
+          const origIsGen = this.isGeneralization;
+          this.isGeneralization = false;
+          try {
+            origShowQuick.call(this);
+          } finally {
+            this.isGeneralization = origIsGen;
+          }
+          return;
+        }
+        return origShowQuick.call(this);
+      };
+    }
+  }
 }
 
 /**
@@ -323,12 +742,17 @@ export function renderVerticalCurlyGeneralization(layoutInstance, item) {
       item.generalizationDashedLine.hide();
     }
   }
+
+  // Layout and render child subtopics attached to vertical generalization node
+  layoutGeneralizationVerticalSubtree(layoutInstance, item);
 }
 
 /**
  * Install the curly bracket generalization renderer into simple-mind-map layouts
  */
 export function setupCurlyGeneralization() {
+  patchGeneralizationChildSupport();
+
   // 1. LogicalStructure (逻辑结构图)
   if (LogicalStructure && LogicalStructure.prototype) {
     LogicalStructure.prototype.renderGeneralization = function (list) {
