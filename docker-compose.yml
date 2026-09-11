@@ -1,16 +1,9 @@
 services:
   open-mindmap:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: open-mindmap:latest
+    image: brian9909/openmindmap:latest
     container_name: open-mindmap
-    restart: unless-stopped
     ports:
       - "8080:8080"
-    environment:
-      - PORT=8080
-      - JWT_SECRET=change-me-in-production-secret-key
     volumes:
-      # 持久化目录：SQLite 数据库和所有思维导图数据
       - ./data:/app/data
+    restart: unless-stopped

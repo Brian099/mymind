@@ -76,9 +76,12 @@
               <span class="w-2 h-2 rounded-full bg-purple-500"></span>
               <span>导出为 SVG 矢量图</span>
             </button>
-            <button @click="handleExport('pdf')" class="w-full px-4 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer">
-              <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-              <span>导出为 PDF 文档</span>
+            <button @click="handleExportVectorPDF" class="w-full px-4 py-2 text-left hover:bg-slate-50 flex items-center justify-between cursor-pointer group">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                <span>导出为 PDF 文档</span>
+              </div>
+              <span class="text-[9px] px-1.5 py-0.5 bg-rose-50 text-rose-600 rounded-md font-semibold border border-rose-100">矢量</span>
             </button>
             <div class="h-px bg-slate-100 my-1"></div>
             <button @click="handleExport('md')" class="w-full px-4 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer">
@@ -1130,6 +1133,7 @@ import { useRoute, useRouter } from 'vue-router';
 import MindMap from 'simple-mind-map';
 import Themes from 'simple-mind-map-plugin-themes';
 import ExportPlugin from 'simple-mind-map/src/plugins/Export.js';
+import ExportPDFPlugin from 'simple-mind-map/src/plugins/ExportPDF.js';
 import DragPlugin from 'simple-mind-map/src/plugins/Drag.js';
 import SelectPlugin from 'simple-mind-map/src/plugins/Select.js';
 import AssociativeLinePlugin from 'simple-mind-map/src/plugins/AssociativeLine.js';
@@ -1154,6 +1158,7 @@ setupCurlyGeneralization();
 
 // Register plugins for full capabilities
 MindMap.usePlugin(ExportPlugin);
+MindMap.usePlugin(ExportPDFPlugin);
 MindMap.usePlugin(DragPlugin);
 MindMap.usePlugin(SelectPlugin);
 MindMap.usePlugin(AssociativeLinePlugin);
@@ -2217,7 +2222,17 @@ const handleExport = async (type) => {
   if (!mindMapInstance) return;
 
   const exportName = title.value || '思维导图';
+  const labelMap = {
+    png: 'PNG 高清图片',
+    svg: 'SVG 矢量图',
+    pdf: 'PDF 文档',
+    md: 'Markdown 大纲',
+    json: 'JSON 数据'
+  };
+  const typeLabel = labelMap[type] || type.toUpperCase();
+
   try {
+    showToast(`正在导出【${typeLabel}】，请稍候...`, 'info');
     if (type === 'json') {
       const data = mindMapInstance.getData(true);
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2230,9 +2245,134 @@ const handleExport = async (type) => {
     } else {
       await mindMapInstance.export(type, true, exportName);
     }
+    showToast(`【${typeLabel}】导出成功！`, 'success');
   } catch (err) {
     console.error('Export error:', err);
-    alert('导出失败，请稍后重试');
+    showToast(`导出失败：${err.message || '请稍后重试'}`, 'warning');
+  }
+};
+
+const handleExportVectorPDF = async () => {
+  isExportMenuOpen.value = false;
+  if (!mindMapInstance) return;
+
+  const exportName = title.value || '思维导图';
+  showToast('正在生成全矢量打印页面...', 'info');
+
+  try {
+    // 导出无损 SVG 矢量字符串
+    const svgDataUrl = await mindMapInstance.export('svg', false, exportName);
+    const base64Content = svgDataUrl.split(',')[1];
+    const binaryStr = atob(base64Content);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    const svgContent = new TextDecoder('utf-8').decode(bytes);
+
+    // 解析 SVG 并确保注入 viewBox，实现自适应等比缩放
+    const parser = new DOMParser();
+    const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+    const svgEl = svgDoc.documentElement;
+
+    const rawWidth = parseFloat(svgEl.getAttribute('width')) || 1200;
+    const rawHeight = parseFloat(svgEl.getAttribute('height')) || 800;
+
+    // 核心修复：添加完整的 viewBox 坐标空间，并允许等比缩放
+    if (!svgEl.getAttribute('viewBox')) {
+      svgEl.setAttribute('viewBox', `0 0 ${rawWidth} ${rawHeight}`);
+    }
+    svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    // 移除硬编码的绝对宽高，使 SVG 100% 自动适应打印纸张
+    svgEl.removeAttribute('width');
+    svgEl.removeAttribute('height');
+
+    // 判断横竖构图，优先使用横向以适配思维导图展开
+    const isLandscape = rawWidth >= rawHeight;
+    const processedSvgHtml = new XMLSerializer().serializeToString(svgEl);
+
+    // 创建隔离打印 iframe
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.right = '0';
+    printFrame.style.bottom = '0';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = '0';
+    printFrame.style.zIndex = '-999';
+    document.body.appendChild(printFrame);
+
+    const doc = printFrame.contentWindow.document;
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>${exportName}</title>
+        <style>
+          @page {
+            size: ${isLandscape ? 'landscape' : 'portrait'};
+            margin: 6mm;
+          }
+          * {
+            box-sizing: border-box;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+          }
+          .print-wrapper {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            box-sizing: border-box;
+            padding: 4mm;
+          }
+          svg {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            display: block;
+            margin: auto;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="print-wrapper">
+          ${processedSvgHtml}
+        </div>
+      </body>
+      </html>
+    `);
+    doc.close();
+
+    // 稍等字体与 DOM 渲染完成，唤起打印
+    setTimeout(() => {
+      printFrame.contentWindow.focus();
+      printFrame.contentWindow.print();
+      showToast('已调起打印，选择【另存为 PDF】即可保存纯矢量 PDF', 'success');
+
+      // 自动清理 iframe
+      setTimeout(() => {
+        if (document.body.contains(printFrame)) {
+          document.body.removeChild(printFrame);
+        }
+      }, 5000);
+    }, 400);
+  } catch (err) {
+    console.error('Vector PDF generation error:', err);
+    showToast(`矢量导出失败: ${err.message || '请直接导出 SVG 矢量图'}`, 'warning');
   }
 };
 

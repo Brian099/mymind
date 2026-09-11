@@ -25,11 +25,25 @@
 
 ## 🚀 Docker 一键部署
 
-只需一条命令即可在服务器或本地运行：
+无需自行构建源码，直接拉取官方 Docker Hub 镜像即可在服务器或本地一键极速运行：
 
 ### 1. 使用 Docker Compose（推荐）
 
-在项目根目录下执行：
+创建 `docker-compose.yml` 文件：
+
+```yaml
+services:
+  open-mindmap:
+    image: brian9909/openmindmap:latest
+    container_name: open-mindmap
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+```
+
+在同级目录下执行启动命令：
 
 ```bash
 # 启动容器并在后台运行
@@ -38,19 +52,16 @@ docker compose up -d
 
 启动完成后，打开浏览器访问：`http://<你的服务器IP>:8080`
 
-### 2. 手动 Docker Build & Run
+### 2. 使用 Docker CLI 直接运行
 
 ```bash
-# 构建镜像
-docker build -t open-mindmap:latest .
-
-# 运行容器并挂载数据卷
+# 直接拉取并运行容器（挂载本地数据卷持久化）
 docker run -d \
   -p 8080:8080 \
   --name open-mindmap \
   -v $(pwd)/data:/app/data \
   --restart unless-stopped \
-  open-mindmap:latest
+  brian9909/openmindmap:latest
 ```
 
 ---
